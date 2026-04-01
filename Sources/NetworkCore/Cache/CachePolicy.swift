@@ -12,8 +12,3 @@ public enum CachePolicy: Sendable {
     case staleWhileRevalidate(ttl: TimeInterval)
     case etag
 }
-
-public enum CacheStore: Sendable {
-    case memory
-    case disk(at: URL)
-}
