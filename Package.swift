@@ -5,22 +5,31 @@ import PackageDescription
 
 let package = Package(
     name: "NetworkCore",
+    platforms: [.iOS(.v17), .macOS(.v14)],
     products: [
         // Products define the executables and libraries a package produces, making them visible to other packages.
         .library(
             name: "NetworkCore",
             targets: ["NetworkCore"]
-        ),
+        )
+        //        .library(name: "NetworkCoreMocks", targets: ["NetworkCoreMocks"]),
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
         // Targets can depend on other targets in this package and products from dependencies.
         .target(
-            name: "NetworkCore"
+            name: "NetworkCore",
+            path: "Sources/NetworkCore"
         ),
+//        .target(
+//            name: "NetworkCoreMocks",
+//            dependencies: ["NetworkCore"],
+//            path: "Sources/NetworkCoreMocks"
+//        ),
         .testTarget(
             name: "NetworkCoreTests",
-            dependencies: ["NetworkCore"]
+            dependencies: ["NetworkCore",/*"NetworkCoreMocks"*/],
+            path: "Tests/NetworkCoreTests"
         ),
     ]
 )
