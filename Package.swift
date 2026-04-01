@@ -11,8 +11,8 @@ let package = Package(
         .library(
             name: "NetworkCore",
             targets: ["NetworkCore"]
-        )
-        //        .library(name: "NetworkCoreMocks", targets: ["NetworkCoreMocks"]),
+        ),
+        .library(name: "NetworkCoreMocks", targets: ["NetworkCoreMocks"]),
     ],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
@@ -21,14 +21,14 @@ let package = Package(
             name: "NetworkCore",
             path: "Sources/NetworkCore"
         ),
-//        .target(
-//            name: "NetworkCoreMocks",
-//            dependencies: ["NetworkCore"],
-//            path: "Sources/NetworkCoreMocks"
-//        ),
+        .target(
+            name: "NetworkCoreMocks",
+            dependencies: ["NetworkCore"],
+            path: "Sources/NetworkCoreMocks"
+        ),
         .testTarget(
             name: "NetworkCoreTests",
-            dependencies: ["NetworkCore",/*"NetworkCoreMocks"*/],
+            dependencies: ["NetworkCore", "NetworkCoreMocks"],
             path: "Tests/NetworkCoreTests"
         ),
     ]
