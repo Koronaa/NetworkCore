@@ -18,7 +18,7 @@ public enum HTTPMethod: String {
 public protocol Endpoint: Sendable {
     var baseURL: URL { get }
     var path: String { get }
-    var methods: HTTPMethod { get }
+    var method: HTTPMethod { get }
     var headers: [String: String] { get }
     var queryItems: [URLQueryItem] { get }
     var body: Data? { get }
@@ -48,7 +48,7 @@ extension Endpoint {
         }
 
         var request = URLRequest(url: url)
-        request.httpMethod = methods.rawValue
+        request.httpMethod = method.rawValue
         request.httpBody = body
         headers.forEach { request.setValue($1, forHTTPHeaderField: $0) }
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")

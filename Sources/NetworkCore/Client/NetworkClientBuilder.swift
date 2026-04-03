@@ -75,14 +75,11 @@ public class NetworkClientBuilder {
     }
 
     //MARK: Build
-    public func build() -> any APIClientProtocol {
+    public func build() throws -> any APIClientProtocol {
         guard let baseURLString = baseURL,
             URL(string: baseURLString) != nil
         else {
-            preconditionFailure(
-                "[NetworkCore] baseURL is required and must be a valid URL. "
-                    + "Call .baseURL(\"https://api.example.com\") before .build()."
-            )
+            throw AppError.network(.invalidURL)
         }
 
         // Assemble interceptors in correct order:
