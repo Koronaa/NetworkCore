@@ -9,8 +9,8 @@ import Foundation
 
 public protocol SessionRepositoryProtocol: Sendable {
 
-    func loadToken() throws -> String
-    func clearToken() throws
-    func saveToken(_ token: String) throws
+    func loadToken() async throws -> String
+    func clearToken() async throws
+    func saveToken(_ token: String) async throws
 
 }
