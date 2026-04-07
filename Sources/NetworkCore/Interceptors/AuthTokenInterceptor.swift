@@ -16,7 +16,7 @@ public final class AuthTokenInterceptor: RequestInterceptorProtocol {
     }
 
     public func intercept(_ request: URLRequest) async throws -> URLRequest {
-        guard let token = try? session.loadToken() else {
+        guard let token = try? await session.loadToken() else {
             // No token available — pass through unauthenticated.
             // Transport will receive a 401 and throw AppError.unauthorized.
             return request
