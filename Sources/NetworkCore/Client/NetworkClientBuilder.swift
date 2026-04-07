@@ -69,7 +69,7 @@ public class NetworkClientBuilder {
     }
 
     //MARK: Build
-    public func build() throws -> any APIClientProtocol {
+    public func build() -> any APIClientProtocol {
        
         // Assemble interceptors in correct order:
         // logging first so it sees the raw request,
