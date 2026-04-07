@@ -91,7 +91,6 @@ targets: [
 import NetworkCore
 
 let client = NetworkClientBuilder()
-    .baseURL("https://api.example.com")
     .build()
 ```
 
@@ -99,7 +98,6 @@ let client = NetworkClientBuilder()
 
 ```swift
 let client = NetworkClientBuilder()
-    .baseURL("https://api.example.com")
     .session(sessionRepository)   // your SessionRepositoryProtocol conformer
     .build()
 ```
@@ -112,7 +110,6 @@ let cacheURL = FileManager.default
     .appendingPathComponent("NetworkCache")
 
 let client = try NetworkClientBuilder()
-    .baseURL("https://api.example.com")
     .session(sessionRepository)
     .addInterceptor(LoggingInterceptor(level: .verbose))
     .retryPolicy(.exponential(maxAttempts: 3, baseDelay: 1.0))
@@ -232,14 +229,13 @@ This is the Dependency Inversion boundary — your repositories depend on the ab
 
 ```swift
 NetworkClientBuilder()
-    .baseURL(String)                                    // required
     .session(any SessionRepositoryProtocol)             // optional — enables auth
     .addInterceptor(any RequestInterceptorProtocol)     // optional — repeatable
     .retryPolicy(RetryPolicy)                           // optional — default: none
     .cachePolicy(CachePolicy, store: CacheStore)        // optional — default: none
     .decoder(any ResponseDecoderProtocol)               // optional — default: JSONResponseDecoder
     .transport(any TransportProtocol)                   // optional — default: URLSessionTransport
-    .build()                                            // throws if baseURL is missing or invalid
+    .build()                                            
 ```
 
 Interceptors are assembled in this order regardless of the order you call `addInterceptor`:
@@ -286,7 +282,6 @@ struct CorrelationIDInterceptor: RequestInterceptorProtocol {
 
 // Register it
 let client = NetworkClientBuilder()
-    .baseURL("https://api.example.com")
     .addInterceptor(CorrelationIDInterceptor())
     .build()
 ```
@@ -392,8 +387,12 @@ final class KeychainSessionRepository: SessionRepositoryProtocol {
         try keychain.load(String.self, forKey: "session.token")
     }
 
-    func clearToken() {
+    func clearToken() throws{
         keychain.delete(forKey: "session.token")
+    }
+    
+    func saveToken(_ token:String) throws{
+        try keychain.save(token, forKey: "session.token")
     }
 }
 ```
@@ -520,7 +519,6 @@ func test_request_mapsServerError() async {
     transport.stubbedError = AppError.network(.serverError(statusCode: 503))
 
     let client = NetworkClientBuilder()
-        .baseURL("https://api.example.com")
         .transport(transport)
         .build()
 
@@ -550,7 +548,6 @@ func test_interceptorIsCalledOnRequest() async throws {
     transport.stubbedData = validJSON
 
     let client = NetworkClientBuilder()
-        .baseURL("https://api.example.com")
         .addInterceptor(interceptor)
         .transport(transport)
         .build()

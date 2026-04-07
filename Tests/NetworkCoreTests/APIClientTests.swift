@@ -30,7 +30,6 @@ final class APIClientTests: XCTestCase {
         transport.stubbedData = json
 
         let client = try! NetworkClientBuilder()
-            .baseURL("https://api.example.com")
             .transport(transport)
             .build()
 
@@ -43,7 +42,6 @@ final class APIClientTests: XCTestCase {
         transport.stubbedError = AppError.network(.serverError(statusCode: 500))
 
         let client = try! NetworkClientBuilder()
-            .baseURL("https://api.example.com")
             .transport(transport)
             .build()
 
@@ -70,7 +68,6 @@ final class APIClientTests: XCTestCase {
         )
 
         let client = try! NetworkClientBuilder()
-            .baseURL("https://api.example.com")
             .retryPolicy(.immediate(maxAttempts: 3))
             .transport(realTransport)
             .build()

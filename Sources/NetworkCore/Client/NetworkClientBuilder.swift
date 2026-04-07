@@ -20,12 +20,6 @@ public class NetworkClientBuilder {
 
     public init() {}
 
-    //MARK: Required
-    @discardableResult
-    public func baseURL(_ baseURL: String) -> Self {
-        self.baseURL = baseURL
-        return self
-    }
 
     //MARK: Optional - auth
     @discardableResult
@@ -76,12 +70,7 @@ public class NetworkClientBuilder {
 
     //MARK: Build
     public func build() throws -> any APIClientProtocol {
-        guard let baseURLString = baseURL,
-            URL(string: baseURLString) != nil
-        else {
-            throw AppError.network(.invalidURL)
-        }
-
+       
         // Assemble interceptors in correct order:
         // logging first so it sees the raw request,
         // auth second so token is attached before retry,

@@ -11,15 +11,8 @@ import XCTest
 
 final class NetworkClientBuilderTests: XCTestCase {
 
-    func test_build_withoutBaseURL_throwsInvalidURL() {
-        XCTAssertThrowsError(try NetworkClientBuilder().build()) { error in
-            XCTAssertEqual(error as? AppError, AppError.network(.invalidURL))
-        }
-    }
-
     func test_build_minimalConfig_returnsClient() {
         let client = try? NetworkClientBuilder()
-            .baseURL("https://api.example.com")
             .build()
         XCTAssertNotNil(client)
     }
@@ -30,7 +23,6 @@ final class NetworkClientBuilderTests: XCTestCase {
             .appendingPathComponent("TestCache")
 
         let client = try? NetworkClientBuilder()
-            .baseURL("https://api.example.com")
             .retryPolicy(.exponential(maxAttempts: 3, baseDelay: 1.0))
             .cachePolicy(.ttl(seconds: 300), store: .disk(at: cacheURL))
             .decoder(JSONResponseDecoder())
