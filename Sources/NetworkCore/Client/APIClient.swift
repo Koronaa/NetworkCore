@@ -137,14 +137,30 @@ public actor APIClient: APIClientProtocol {
             do {
                 let raw = endpoint.urlRequest
                 let enriched = try await chain.apply(to: raw)
-                let (data, _) = try await transport.send(enriched)
+                //send
+                var (data, response) = try await transport.send(enriched)
+
+                // Run response interceptors — passing a retry handler
+                // that re-runs the full request pipeline from scratch
+                // so any token changes are picked up automatically
+                (data, response) = try await chain.apply(
+                    to: response,
+                    request: enriched,
+                    data: data,
+                    retryHandler: { [chain, transport] in
+                        let retried = try await chain.apply(to: raw)
+                        return try await transport.send(retried)
+                    }
+                )
+
                 return data
             } catch {
                 lastError = error
                 // Don't retry client errors or auth failures
                 if let appError = error as? AppError {
                     switch appError {
-                    case .unauthorized, .network(.decodingFailed),
+                    case .unauthorized,
+                        .network(.decodingFailed),
                         .network(.invalidURL):
                         throw appError
                     default: break

@@ -8,7 +8,7 @@
 import Foundation
 import NetworkCore
 
-public final class MockInterceptor: RequestInterceptorProtocol,
+public final class MockRequestInterceptor: RequestInterceptorProtocol,
     @unchecked Sendable
 {
 
