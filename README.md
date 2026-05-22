@@ -372,8 +372,9 @@ The package defines `SessionRepositoryProtocol` — a narrow contract covering o
 
 ```swift
 public protocol SessionRepositoryProtocol: Sendable {
-    func loadToken() throws -> String
-    func clearToken()
+    func loadToken() async throws -> String
+    func clearToken() async throws
+    func saveToken(_ token: String) async throws
 }
 ```
 
