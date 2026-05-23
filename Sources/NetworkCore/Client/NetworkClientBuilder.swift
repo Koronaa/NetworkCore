@@ -7,11 +7,11 @@
 
 import Foundation
 
-public class NetworkClientBuilder {
+public final class NetworkClientBuilder {
 
-    private var baseURL: String?
     private var session: (any SessionRepositoryProtocol)?
-    private var interceptors: [any RequestInterceptorProtocol] = []
+    private var requestInterceptors: [any RequestInterceptorProtocol] = []
+    private var responseInterceptors: [any ResponseInterceptorProtocol] = []
     private var retryPolicy: RetryPolicy?
     private var cachePolicy: CachePolicy?
     private var cacheStore: CacheStore?
@@ -19,7 +19,6 @@ public class NetworkClientBuilder {
     private var transport: (any TransportProtocol)?
 
     public init() {}
-
 
     //MARK: Optional - auth
     @discardableResult
@@ -30,10 +29,22 @@ public class NetworkClientBuilder {
 
     //MARK: Optional - interceptors
     @discardableResult
-    public func addInterceptor(_ interceptor: any RequestInterceptorProtocol)
+    public func addRequestInterceptor(
+        _ interceptor: any RequestInterceptorProtocol
+    )
         -> Self
     {
-        self.interceptors.append(interceptor)
+        self.requestInterceptors.append(interceptor)
+        return self
+    }
+
+    @discardableResult
+    public func addResponseInterceptor(
+        _ interceptor: any ResponseInterceptorProtocol
+    )
+        -> Self
+    {
+        self.responseInterceptors.append(interceptor)
         return self
     }
 
@@ -69,30 +80,32 @@ public class NetworkClientBuilder {
     }
 
     //MARK: Build
-    public func build() throws -> any APIClientProtocol {
-       
+    public func build() -> any APIClientProtocol {
+
         // Assemble interceptors in correct order:
         // logging first so it sees the raw request,
         // auth second so token is attached before retry,
         // custom interceptors next,
         // retry last so it wraps everything above it.
-        var allInterceptors: [any RequestInterceptorProtocol] = []
+        var allRequestInterceptors: [any RequestInterceptorProtocol] = []
 
         //Logging is not added here, Login needs to be added by the developer specifically if needed by calling .addInterceptor(LoggingInterceptor())
 
         // Auth runs before custom interceptors so the token
         // is present when any custom logic inspects headers
         if let session {
-            allInterceptors.append(AuthTokenInterceptor(session: session))
+            allRequestInterceptors.append(
+                AuthTokenInterceptor(session: session)
+            )
         }
 
         // Custom interceptors added by the developer via .addInterceptor()
         // This is also where LoggingInterceptor lands if the developer opts in
-        allInterceptors.append(contentsOf: interceptors)
+        allRequestInterceptors.append(contentsOf: requestInterceptors)
 
         // Retry wraps everything — it re-runs the full chain on each attempt
         if let retryPolicy {
-            allInterceptors.append(RetryInterceptor(policy: retryPolicy))
+            allRequestInterceptors.append(RetryInterceptor(policy: retryPolicy))
         }
 
         //Resolve cache store
@@ -107,7 +120,10 @@ public class NetworkClientBuilder {
         }
 
         return APIClient(
-            chain: InterceptorChain(interceptors: allInterceptors),
+            chain: InterceptorChain(
+                requestInterceptors: allRequestInterceptors,
+                responseInterceptors: responseInterceptors
+            ),
             transport: transport ?? URLSessionTransport(),
             decoder: decoder ?? JSONResponseDecoder(),
             cache: resolvedCache,

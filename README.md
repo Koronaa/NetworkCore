@@ -14,7 +14,8 @@ A modular, protocol-first Swift networking package built for reuse across multip
   - [Endpoint](#endpoint)
   - [APIClientProtocol](#apiclientprotocol)
   - [Builder](#builder)
-  - [Interceptors](#interceptors)
+  - [Request interceptors](#request-interceptors)
+  - [Response interceptors](#response-interceptors)
   - [Retry](#retry)
   - [Cache](#cache)
   - [Session and auth](#session-and-auth)
@@ -29,7 +30,8 @@ A modular, protocol-first Swift networking package built for reuse across multip
 ## Features
 
 - Protocol-first design — every layer is swappable
-- Interceptor chain — auth, logging, retry, and custom interceptors composable in any order
+- Request interceptor chain — auth, logging, retry, and custom interceptors composable in any order
+- Response interceptor chain — inspect, mutate, or retry any response (token refresh, logging, analytics)
 - Built-in retry with immediate and exponential back-off strategies
 - Response caching with TTL, stale-while-revalidate, and ETag policies
 - Two cache backends — in-memory and disk — both swappable via protocol
@@ -109,9 +111,10 @@ let cacheURL = FileManager.default
     .urls(for: .cachesDirectory, in: .userDomainMask)[0]
     .appendingPathComponent("NetworkCache")
 
-let client = try NetworkClientBuilder()
+let client = NetworkClientBuilder()
     .session(sessionRepository)
-    .addInterceptor(LoggingInterceptor(level: .verbose))
+    .addRequestInterceptor(LoggingInterceptor(level: .verbose))
+    .addResponseInterceptor(TokenRefreshInterceptor(...))
     .retryPolicy(.exponential(maxAttempts: 3, baseDelay: 1.0))
     .cachePolicy(.ttl(seconds: 300), store: .disk(at: cacheURL))
     .decoder(JSONResponseDecoder())
@@ -133,7 +136,7 @@ enum PostsEndpoint: Endpoint {
 
     var path: String {
         switch self {
-        case .list:          return "/posts"
+        case .list:           return "/posts"
         case .detail(let id): return "/posts/\(id)"
         }
     }
@@ -225,34 +228,37 @@ This is the Dependency Inversion boundary — your repositories depend on the ab
 
 ### Builder
 
-`NetworkClientBuilder` is the single configuration point. All options except `baseURL` are optional and have sensible defaults.
+`NetworkClientBuilder` is the single configuration point. All options are optional with sensible defaults.
 
 ```swift
 NetworkClientBuilder()
-    .session(any SessionRepositoryProtocol)             // optional — enables auth
-    .addInterceptor(any RequestInterceptorProtocol)     // optional — repeatable
-    .retryPolicy(RetryPolicy)                           // optional — default: none
-    .cachePolicy(CachePolicy, store: CacheStore)        // optional — default: none
-    .decoder(any ResponseDecoderProtocol)               // optional — default: JSONResponseDecoder
-    .transport(any TransportProtocol)                   // optional — default: URLSessionTransport
-    .build()                                            
+    .session(any SessionRepositoryProtocol)                  // optional — enables auth
+    .addRequestInterceptor(any RequestInterceptorProtocol)   // optional — repeatable
+    .addResponseInterceptor(any ResponseInterceptorProtocol) // optional — repeatable
+    .retryPolicy(RetryPolicy)                                // optional — default: none
+    .cachePolicy(CachePolicy, store: CacheStore)             // optional — default: none
+    .decoder(any ResponseDecoderProtocol)                    // optional — default: JSONResponseDecoder
+    .transport(any TransportProtocol)                        // optional — default: URLSessionTransport
+    .build()
 ```
 
 Interceptors are assembled in this order regardless of the order you call `addInterceptor`:
 
 ```
-AuthTokenInterceptor   (if session provided)
-custom interceptors    (in the order added)
-RetryInterceptor       (if retryPolicy provided)
+AuthTokenInterceptor        (if session provided)
+custom request interceptors (in the order added)
+RetryInterceptor            (if retryPolicy provided)
 ```
 
-Retry is always outermost so each attempt re-runs the full chain — including re-attaching a potentially refreshed auth token.
+Response interceptors run after the transport returns, in the order added via `addResponseInterceptor`.
+
+Retry is always outermost on the request side so each attempt re-runs the full chain — including re-attaching a potentially refreshed auth token.
 
 ---
 
-### Interceptors
+### Request interceptors
 
-Interceptors conform to `RequestInterceptorProtocol` and are composed via `InterceptorChain`. Each interceptor has one job (Single Responsibility). Adding a new cross-cutting concern means adding a new type, not editing existing ones (Open/Closed).
+Request interceptors conform to `RequestInterceptorProtocol` and mutate outgoing requests before they reach the transport.
 
 ```swift
 public protocol RequestInterceptorProtocol: Sendable {
@@ -268,7 +274,7 @@ public protocol RequestInterceptorProtocol: Sendable {
 | `LoggingInterceptor` | Prints request details | No — opt in via `.addInterceptor()` |
 | `RetryInterceptor` | Tags request with retry limit | Yes, if `.retryPolicy()` is set |
 
-**Writing a custom interceptor:**
+**Writing a custom request interceptor:**
 
 ```swift
 // Add a correlation ID to every request for distributed tracing
@@ -280,9 +286,8 @@ struct CorrelationIDInterceptor: RequestInterceptorProtocol {
     }
 }
 
-// Register it
 let client = NetworkClientBuilder()
-    .addInterceptor(CorrelationIDInterceptor())
+    .addRequestInterceptor(CorrelationIDInterceptor())
     .build()
 ```
 
@@ -291,6 +296,125 @@ let client = NetworkClientBuilder()
 ```swift
 .addInterceptor(LoggingInterceptor(level: .minimal))   // method + URL only
 .addInterceptor(LoggingInterceptor(level: .verbose))   // headers + body
+```
+
+---
+
+### Response interceptors
+
+Response interceptors conform to `ResponseInterceptorProtocol` and run after the transport returns. They can inspect or mutate the response data, or trigger a full retry of the original request by calling `retryHandler`.
+
+```swift
+public protocol ResponseInterceptorProtocol: Sendable {
+    func intercept(
+        request:      URLRequest,
+        response:     HTTPURLResponse,
+        data:         Data,
+        retryHandler: @Sendable () async throws -> (Data, HTTPURLResponse)
+    ) async throws -> (Data, HTTPURLResponse)
+}
+```
+
+The `retryHandler` closure re-runs the complete request pipeline from scratch — including all request interceptors — so any state changes such as a refreshed auth token are picked up automatically on the retry.
+
+**Common use case — token refresh:**
+
+The library ships the hook. Your app implements the logic. This keeps the package auth-agnostic while giving every consumer a clean, documented extension point.
+
+```swift
+// In your app — not in the library
+public actor TokenRefreshInterceptor: ResponseInterceptorProtocol {
+
+    private let session:         any SessionRepositoryProtocol
+    private let refreshEndpoint: (String) -> any Endpoint
+    private let transport:       any TransportProtocol
+    private let decoder:         any ResponseDecoderProtocol
+    private var isRefreshing     = false
+
+    public init(
+        session:         any SessionRepositoryProtocol,
+        refreshEndpoint: @escaping (String) -> any Endpoint,
+        transport:       any TransportProtocol,
+        decoder:         any ResponseDecoderProtocol
+    ) {
+        self.session         = session
+        self.refreshEndpoint = refreshEndpoint
+        self.transport       = transport
+        self.decoder         = decoder
+    }
+
+    public func intercept(
+        request:      URLRequest,
+        response:     HTTPURLResponse,
+        data:         Data,
+        retryHandler: @Sendable () async throws -> (Data, HTTPURLResponse)
+    ) async throws -> (Data, HTTPURLResponse) {
+        guard response.statusCode == 401 else { return (data, response) }
+        try await refresh()
+        return try await retryHandler()
+    }
+
+    private func refresh() async throws {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        defer { isRefreshing = false }
+
+        let token     = try await session.loadRefreshToken()
+        let endpoint  = refreshEndpoint(token)
+        let (data, _) = try await transport.send(endpoint.urlRequest)
+        let response  = try decoder.decode(TokenRefreshResponse.self, from: data)
+        try await session.saveAccessToken(response.accessToken)
+        try await session.saveRefreshToken(response.refreshToken)
+    }
+}
+```
+
+Register it via the builder:
+
+```swift
+let client = NetworkClientBuilder()
+    .session(sessionRepository)
+    .addResponseInterceptor(
+        TokenRefreshInterceptor(
+            session:         sessionRepository,
+            refreshEndpoint: { token in RefreshEndpoint(refreshToken: token) },
+            transport:       URLSessionTransport(),
+            decoder:         JSONResponseDecoder()
+        )
+    )
+    .build()
+```
+
+Because `TokenRefreshInterceptor` is an `actor`, simultaneous 401 responses are automatically serialised — only one refresh call fires regardless of how many requests expired at the same time.
+
+**Other uses for response interceptors:**
+
+```swift
+// Response logging
+struct ResponseLoggingInterceptor: ResponseInterceptorProtocol {
+    func intercept(
+        request:      URLRequest,
+        response:     HTTPURLResponse,
+        data:         Data,
+        retryHandler: @Sendable () async throws -> (Data, HTTPURLResponse)
+    ) async throws -> (Data, HTTPURLResponse) {
+        print("← \(response.statusCode) \(request.url?.absoluteString ?? "")")
+        return (data, response)
+    }
+}
+
+// Analytics
+struct AnalyticsInterceptor: ResponseInterceptorProtocol {
+    func intercept(
+        request:      URLRequest,
+        response:     HTTPURLResponse,
+        data:         Data,
+        retryHandler: @Sendable () async throws -> (Data, HTTPURLResponse)
+    ) async throws -> (Data, HTTPURLResponse) {
+        Analytics.track(url: request.url, statusCode: response.statusCode)
+        return (data, response)
+    }
+}
 ```
 
 ---
@@ -348,8 +472,6 @@ The disk path is always provided by the consuming app — the package makes no a
 
 **Cache invalidation from a repository:**
 
-The package ships `ResponseCacheProtocol` so repositories can invalidate entries after mutations:
-
 ```swift
 final class PostsRepository {
     private let client: any APIClientProtocol
@@ -357,7 +479,6 @@ final class PostsRepository {
 
     func createPost(_ post: NewPost) async throws -> Post {
         let created: Post = try await client.request(PostsEndpoint.create(post))
-        // Invalidate the list so the next fetch is fresh
         await cache.invalidate(forKey: "/posts")
         return created
     }
@@ -372,8 +493,11 @@ The package defines `SessionRepositoryProtocol` — a narrow contract covering o
 
 ```swift
 public protocol SessionRepositoryProtocol: Sendable {
-    func loadToken() throws -> String
-    func clearToken()
+    func loadAccessToken() async throws -> String
+    func clearTokens() async throws
+    func saveAccessToken(_ token: String) async throws
+    func loadRefreshToken() async throws -> String
+    func saveRefreshToken(_ token: String) async throws
 }
 ```
 
@@ -383,21 +507,30 @@ A typical Keychain-backed implementation:
 final class KeychainSessionRepository: SessionRepositoryProtocol {
     private let keychain: KeychainStorage
 
-    func loadToken() throws -> String {
-        try keychain.load(String.self, forKey: "session.token")
+    func loadAccessToken() async throws -> String {
+        try keychain.load(String.self, forKey: "session.access-token")
     }
 
-    func clearToken() throws{
-        keychain.delete(forKey: "session.token")
+    func saveAccessToken(_ token: String) async throws {
+        try keychain.save(token, forKey: "session.access-token")
     }
     
-    func saveToken(_ token:String) throws{
-        try keychain.save(token, forKey: "session.token")
+    func loadRefreshToken() async throws -> String {
+        try keychain.load(String.self, forKey: "session.refresh-token")
+    }
+    
+    func saveRefreshToken(_ token: String) async throws {
+        try keychain.save(token, forKey: "session.refresh-token")
+    }
+
+    func clearTokens() async throws {
+        keychain.delete(forKey: "session.access-token")
+        keychain.delete(forKey: "session.refresh-token")
     }
 }
 ```
 
-Token saving is intentionally not part of this protocol — that belongs in your `AuthRepository` after a successful login response, not in the network layer.
+Token saving after login belongs in your `AuthRepository`, not inside the network layer:
 
 ```swift
 // ✅ Correct — token saved at repository level after login
@@ -409,7 +542,7 @@ final class AuthRepository {
         let response: AuthResponse = try await client.request(
             AuthEndpoint.login(email: email, password: password)
         )
-        try session.saveToken(response.token)  // ← here, not inside APIClient
+        try await session.saveAccessToken(response.token)
         return response.user.toDomain()
     }
 }
@@ -442,7 +575,6 @@ func fetchPosts() async {
     } catch AppError.network(.noConnection) {
         state = .failure(.noConnection)
     } catch AppError.unauthorized {
-        // Token expired — trigger re-login flow
         coordinator.showLogin()
     } catch let error as AppError {
         state = .failure(error)
@@ -470,7 +602,7 @@ enum PaymentError: Error, AppErrorConvertible {
 
 ## Testing
 
-Add `NetworkCoreMocks` to your test target. It ships four ready-made test doubles.
+Add `NetworkCoreMocks` to your test target. It ships five ready-made test doubles.
 
 ### MockAPIClient
 
@@ -485,8 +617,8 @@ final class PostsRepositoryTests: XCTestCase {
             PostDTO(id: 1, title: "Hello", body: "World", userId: 1)
         ]
 
-        let repo   = PostsRepository(client: mock)
-        let posts  = try await repo.fetchPosts()
+        let repo  = PostsRepository(client: mock)
+        let posts = try await repo.fetchPosts()
 
         XCTAssertEqual(posts.count, 1)
         XCTAssertEqual(posts[0].title, "Hello")
@@ -511,7 +643,7 @@ final class PostsRepositoryTests: XCTestCase {
 
 ### MockTransport
 
-Use when you want to test `APIClient` internals — simulates raw server responses without a network connection.
+Simulates raw server responses without a network connection. Use when testing `APIClient` internals.
 
 ```swift
 func test_request_mapsServerError() async {
@@ -533,11 +665,11 @@ func test_request_mapsServerError() async {
 
 ### MockInterceptor
 
-Verifies that interceptors are called and can inspect or mutate requests in tests.
+Verifies request interceptors are called and can inspect or mutate requests in tests.
 
 ```swift
 func test_interceptorIsCalledOnRequest() async throws {
-    let interceptor = MockInterceptor()
+    let interceptor = MockRequestInterceptor()
     interceptor.modifier = { request in
         var r = request
         r.setValue("test-value", forHTTPHeaderField: "X-Custom")
@@ -548,7 +680,7 @@ func test_interceptorIsCalledOnRequest() async throws {
     transport.stubbedData = validJSON
 
     let client = NetworkClientBuilder()
-        .addInterceptor(interceptor)
+        .addRequestInterceptor(interceptor)
         .transport(transport)
         .build()
 
@@ -559,6 +691,47 @@ func test_interceptorIsCalledOnRequest() async throws {
         interceptor.interceptedRequests[0].value(forHTTPHeaderField: "X-Custom"),
         "test-value"
     )
+}
+```
+
+### MockResponseInterceptor
+
+Verifies response interceptors are called, records all calls, and can simulate retry behaviour.
+
+```swift
+func test_responseInterceptor_isCalledAfterTransport() async throws {
+    let transport = MockTransport()
+    transport.stubbedData = validJSON
+
+    let interceptor = MockResponseInterceptor()
+
+    let client = NetworkClientBuilder()
+        .transport(transport)
+        .addResponseInterceptor(interceptor)
+        .build()
+
+    let _: SomeDTO = try await client.request(SomeEndpoint())
+
+    XCTAssertEqual(interceptor.calls.count, 1)
+    XCTAssertEqual(interceptor.calls[0].response.statusCode, 200)
+}
+
+func test_responseInterceptor_canTriggerRetry() async throws {
+    let transport = MockTransport()
+    transport.stubbedData = validJSON
+
+    let interceptor = MockResponseInterceptor()
+    interceptor.shouldRetry = true   // triggers retryHandler once
+
+    let client = NetworkClientBuilder()
+        .transport(transport)
+        .addResponseInterceptor(interceptor)
+        .build()
+
+    let _: SomeDTO = try await client.request(SomeEndpoint())
+
+    XCTAssertEqual(interceptor.retryCount, 1)
+    XCTAssertEqual(transport.sentRequests.count, 2)  // original + retry
 }
 ```
 
@@ -598,9 +771,13 @@ func test_repository_invalidatesCache_afterCreate() async throws {
 ┌────────────────────▼────────────────────────────┐
 │  APIClient (actor)                              │
 │  ├── InterceptorChain                           │
-│  │     ├── AuthTokenInterceptor                 │
-│  │     ├── [custom interceptors]                │
-│  │     └── RetryInterceptor                     │
+│  │     ├── Request interceptors                 │
+│  │     │     ├── AuthTokenInterceptor           │
+│  │     │     ├── [custom request interceptors]  │
+│  │     │     └── RetryInterceptor               │
+│  │     └── Response interceptors                │
+│  │           └── [custom response interceptors] │
+│  │                 e.g. TokenRefreshInterceptor │
 │  ├── TransportProtocol → URLSessionTransport    │
 │  ├── ResponseDecoderProtocol → JSONDecoder      │
 │  └── ResponseCacheProtocol?                     │
@@ -614,6 +791,7 @@ func test_repository_invalidatesCache_afterCreate() async throws {
 - Feature layer → `APIClientProtocol` (compile-time)
 - `APIClient` → `TransportProtocol`, `ResponseDecoderProtocol`, `ResponseCacheProtocol` (runtime, injected)
 - `AuthTokenInterceptor` → `SessionRepositoryProtocol` (runtime, injected by app)
+- Response interceptors (e.g. `TokenRefreshInterceptor`) — defined and owned entirely by the app
 - Nothing in the package → app code (unidirectional)
 
 ---
@@ -632,6 +810,7 @@ NetworkCore/
 │   │   │   ├── TransportProtocol.swift
 │   │   │   ├── ResponseDecoderProtocol.swift
 │   │   │   ├── RequestInterceptorProtocol.swift
+│   │   │   ├── ResponseInterceptorProtocol.swift     
 │   │   │   └── SessionRepositoryProtocol.swift
 │   │   ├── Client/
 │   │   │   ├── APIClient.swift
@@ -655,16 +834,14 @@ NetworkCore/
 │   └── NetworkCoreMocks/
 │       ├── MockAPIClient.swift
 │       ├── MockTransport.swift
-│       ├── MockInterceptor.swift
+│       ├── MockRequestInterceptor.swift
+│       ├── MockResponseInterceptor.swift             
 │       └── MockResponseCache.swift
 │
 └── Tests/
     └── NetworkCoreTests/
         ├── APIClientTests.swift
         ├── InterceptorChainTests.swift
-        ├── AuthTokenInterceptorTests.swift
-        ├── RetryInterceptorTests.swift
-        ├── ResponseCacheTests.swift
         └── NetworkClientBuilderTests.swift
 ```
 

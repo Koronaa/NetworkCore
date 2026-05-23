@@ -8,17 +8,19 @@
 import Foundation
 import NetworkCore
 
-public final class MockInterceptor: RequestInterceptorProtocol,
+public final class MockRequestInterceptor: RequestInterceptorProtocol,
     @unchecked Sendable
 {
 
     public private(set) var interceptedRequests: [URLRequest] = []
     public var modifier: ((URLRequest) -> URLRequest)?
+    public var stubbedError: Error?
 
     public init() {}
 
     public func intercept(_ request: URLRequest) async throws -> URLRequest {
         interceptedRequests.append(request)
+        if let error = stubbedError { throw error }
         return modifier?(request) ?? request
     }
 

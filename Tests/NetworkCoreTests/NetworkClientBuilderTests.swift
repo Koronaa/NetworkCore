@@ -26,7 +26,7 @@ final class NetworkClientBuilderTests: XCTestCase {
             .retryPolicy(.exponential(maxAttempts: 3, baseDelay: 1.0))
             .cachePolicy(.ttl(seconds: 300), store: .disk(at: cacheURL))
             .decoder(JSONResponseDecoder())
-            .addInterceptor(LoggingInterceptor(level: .verbose))
+            .addRequestInterceptor(LoggingInterceptor(level: .verbose))
             .build()
 
         XCTAssertNotNil(client)
