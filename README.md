@@ -669,7 +669,7 @@ Verifies request interceptors are called and can inspect or mutate requests in t
 
 ```swift
 func test_interceptorIsCalledOnRequest() async throws {
-    let interceptor = MockInterceptor()
+    let interceptor = MockRequestInterceptor()
     interceptor.modifier = { request in
         var r = request
         r.setValue("test-value", forHTTPHeaderField: "X-Custom")
@@ -680,7 +680,7 @@ func test_interceptorIsCalledOnRequest() async throws {
     transport.stubbedData = validJSON
 
     let client = NetworkClientBuilder()
-        .addInterceptor(interceptor)
+        .addRequestInterceptor(interceptor)
         .transport(transport)
         .build()
 
@@ -810,7 +810,7 @@ NetworkCore/
 │   │   │   ├── TransportProtocol.swift
 │   │   │   ├── ResponseDecoderProtocol.swift
 │   │   │   ├── RequestInterceptorProtocol.swift
-│   │   │   ├── ResponseInterceptorProtocol.swift     ← new in 1.1.0
+│   │   │   ├── ResponseInterceptorProtocol.swift     
 │   │   │   └── SessionRepositoryProtocol.swift
 │   │   ├── Client/
 │   │   │   ├── APIClient.swift
@@ -834,17 +834,14 @@ NetworkCore/
 │   └── NetworkCoreMocks/
 │       ├── MockAPIClient.swift
 │       ├── MockTransport.swift
-│       ├── MockInterceptor.swift
-│       ├── MockResponseInterceptor.swift             ← new in 1.1.0
+│       ├── MockRequestInterceptor.swift
+│       ├── MockResponseInterceptor.swift             
 │       └── MockResponseCache.swift
 │
 └── Tests/
     └── NetworkCoreTests/
         ├── APIClientTests.swift
         ├── InterceptorChainTests.swift
-        ├── AuthTokenInterceptorTests.swift
-        ├── RetryInterceptorTests.swift
-        ├── ResponseCacheTests.swift
         └── NetworkClientBuilderTests.swift
 ```
 
